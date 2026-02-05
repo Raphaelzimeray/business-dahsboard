@@ -1,30 +1,36 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from "next/server";
+import { COOKIE_NAME } from "@/lib/auth";
+import { signSession } from "@/lib/session";
 
-const AUTH_COOKIE = "bizdash_session";
+export async function POST(req: Request) {
+  const form = await req.formData();
+  const email = String(form.get("email") || "").trim();
+  const password = String(form.get("password") || "");
+  const next = String(form.get("next") || "/dashboard");
 
-export async function POST(req: NextRequest) {
-  const formData = await req.formData();
-  const email = String(formData.get("email") ?? "");
-  const password = String(formData.get("password") ?? "");
-  const next = String(formData.get("next") ?? "/dashboard");
-
-  // Mock auth : on accepte tout tant que non vide
   if (!email || !password) {
-    const url = new URL("/login", req.url);
-    url.searchParams.set("error", "missing");
-    url.searchParams.set("next", next);
-    return NextResponse.redirect(url);
+    return NextResponse.redirect(new URL(`/login?error=missing&next=${encodeURIComponent(next)}`, req.url));
   }
 
-  const safeNext = next.startsWith("/") ? next : "/dashboard";
-  const res = NextResponse.redirect(new URL(safeNext, req.url));
+  const adminEmail = process.env.ADMIN_EMAIL || "";
+  const adminPassword = process.env.ADMIN_PASSWORD || "";
 
-  res.cookies.set(AUTH_COOKIE, "demo", {
+  const ok = email === adminEmail && password === adminPassword;
+
+  if (!ok) {
+    return NextResponse.redirect(new URL(`/login?error=invalid&next=${encodeURIComponent(next)}`, req.url));
+  }
+
+  const token = signSession({ sub: email, role: "admin" });
+
+  const res = NextResponse.redirect(new URL(next, req.url));
+  res.cookies.set({
+    name: COOKIE_NAME,
+    value: token,
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
-    maxAge: 60 * 60 * 24 * 7, // 7 jours
   });
 
   return res;

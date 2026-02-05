@@ -35,7 +35,7 @@ export default function LoginPage({ searchParams }: Props) {
               type="email"
               required
               placeholder="demo@company.com"
-              className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-900/10"
+              className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-zinc-900/10"
             />
           </div>
 
@@ -46,7 +46,7 @@ export default function LoginPage({ searchParams }: Props) {
               type="password"
               required
               placeholder="anything works"
-              className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-900/10"
+              className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-zinc-900/10"
             />
             <p className="text-xs text-zinc-500">
               Mock login: any values will work.

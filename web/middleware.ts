@@ -1,28 +1,21 @@
-import { NextResponse, type NextRequest } from "next/server";
-
-const AUTH_COOKIE = "bizdash_session";
+import { NextRequest, NextResponse } from "next/server";
+import { COOKIE_NAME } from "@/lib/auth";
+import { verifySession } from "@/lib/session";
 
 export function middleware(req: NextRequest) {
   const { pathname, search } = req.nextUrl;
 
-  const isDashboard = pathname.startsWith("/dashboard");
-  const isLogin = pathname === "/login";
+  const isProtected = pathname.startsWith("/dashboard");
+  if (!isProtected) return NextResponse.next();
 
-  const session = req.cookies.get(AUTH_COOKIE)?.value;
+  const token = req.cookies.get(COOKIE_NAME)?.value;
+  const session = token ? verifySession(token) : null;
 
-  // 1) Not logged in -> block dashboard
-  if (!session && isDashboard) {
+  if (!session) {
+    const next = `${pathname}${search}`;
     const url = req.nextUrl.clone();
     url.pathname = "/login";
-    url.searchParams.set("next", pathname + search);
-    return NextResponse.redirect(url);
-  }
-
-  // 2) Logged in -> avoid login page
-  if (session && isLogin) {
-    const url = req.nextUrl.clone();
-    url.pathname = "/dashboard";
-    url.search = "";
+    url.searchParams.set("next", next);
     return NextResponse.redirect(url);
   }
 
@@ -30,5 +23,5 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/login"],
+  matcher: ["/dashboard/:path*"],
 };
