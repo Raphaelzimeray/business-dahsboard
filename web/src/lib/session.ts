@@ -1,39 +1,104 @@
-import crypto from "crypto";
-
-type SessionPayload = {
-  sub: string;        // user identifier (ex: email)
+export type SessionPayload = {
+  sub: string; // identifiant (ex: email)
   role: "admin";
-  exp: number;        // unix seconds
 };
 
-const SECRET = process.env.AUTH_SECRET || "dev-secret-change-me";
+type SessionData = SessionPayload & {
+  iat: number; // issued-at (timestamp secondes)
+  exp: number; // expiration
+};
 
-export function signSession(payload: Omit<SessionPayload, "exp">, ttlSeconds = 60 * 60 * 8) {
-  const full: SessionPayload = {
-    ...payload,
-    exp: Math.floor(Date.now() / 1000) + ttlSeconds,
-  };
+const encoder = new TextEncoder();
+const DEFAULT_TTL_SECONDS = 60 * 60 * 24; // 1 jour
 
-  const body = Buffer.from(JSON.stringify(full)).toString("base64url");
-  const sig = crypto.createHmac("sha256", SECRET).update(body).digest("base64url");
+function toBase64(bytes: Uint8Array): string {
+  // Node (route handlers) => Buffer ok
+  // Edge (middleware) => Buffer non, donc fallback btoa
+  // @ts-expect-error Buffer may not exist in Edge
+  if (typeof Buffer !== "undefined") return Buffer.from(bytes).toString("base64");
+
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+function fromBase64(base64: string): Uint8Array {
+  // @ts-expect-error Buffer may not exist in Edge
+  if (typeof Buffer !== "undefined") return new Uint8Array(Buffer.from(base64, "base64"));
+
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function base64UrlEncode(bytes: Uint8Array): string {
+  return toBase64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function base64UrlDecode(b64url: string): Uint8Array {
+  const padded = b64url.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((b64url.length + 3) % 4);
+  return fromBase64(padded);
+}
+
+function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+
+async function getKey(secret: string): Promise<CryptoKey> {
+  return crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+}
+
+export async function signSession(payload: SessionPayload, ttlSeconds = DEFAULT_TTL_SECONDS): Promise<string> {
+  const secret = process.env.AUTH_SECRET ?? "";
+  if (!secret) throw new Error("AUTH_SECRET is missing (check .env.local)");
+
+  const now = Math.floor(Date.now() / 1000);
+  const data: SessionData = { ...payload, iat: now, exp: now + ttlSeconds };
+
+  const bodyJson = JSON.stringify(data);
+  const body = base64UrlEncode(encoder.encode(bodyJson));
+
+  const key = await getKey(secret);
+  const sigBytes = new Uint8Array(await crypto.subtle.sign("HMAC", key, encoder.encode(body)));
+  const sig = base64UrlEncode(sigBytes);
+
   return `${body}.${sig}`;
 }
 
-export function verifySession(token: string): SessionPayload | null {
+export async function verifySession(token: string): Promise<SessionData | null> {
+  const secret = process.env.AUTH_SECRET ?? "";
+  if (!secret) return null;
+
   const [body, sig] = token.split(".");
   if (!body || !sig) return null;
 
-  const expected = crypto.createHmac("sha256", SECRET).update(body).digest("base64url");
+  const key = await getKey(secret);
+  const expectedSigBytes = new Uint8Array(await crypto.subtle.sign("HMAC", key, encoder.encode(body)));
+  const givenSigBytes = base64UrlDecode(sig);
 
-  // compare "safe"
-  const a = Buffer.from(sig);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length) return null;
-  if (!crypto.timingSafeEqual(a, b)) return null;
+  if (!timingSafeEqual(expectedSigBytes, givenSigBytes)) return null;
 
-  const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as SessionPayload;
+  let data: SessionData;
+  try {
+    const json = new TextDecoder().decode(base64UrlDecode(body));
+    data = JSON.parse(json) as SessionData;
+  } catch {
+    return null;
+  }
 
-  if (!payload?.exp || payload.exp < Math.floor(Date.now() / 1000)) return null;
+  const now = Math.floor(Date.now() / 1000);
+  if (!data?.sub || data?.role !== "admin") return null;
+  if (typeof data.exp !== "number" || data.exp < now) return null;
 
-  return payload;
+  return data;
 }
